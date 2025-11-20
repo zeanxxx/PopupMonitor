@@ -1,0 +1,23 @@
+{
+  "zh-TW": {
+    "popupClassName": "Xaml_WindowedPopupClass",
+    "popupTitle": "主機彈出窗口",
+    "popupProcessName": "實時輔助字幕.exe",
+    "propTitle": "實時輔助字幕",
+    "propClassName": "LiveCaptionsDesktopWindow"
+  },
+  "zh-CN": {
+    "popupClassName": "Xaml_WindowedPopupClass",
+    "popupTitle": "主机弹出窗口",
+    "popupProcessName": "实时辅助字幕.exe",
+    "propTitle": "实时辅助字幕",
+    "propClassName": "LiveCaptionsDesktopWindow"
+  },
+  "en-US": {
+    "popupClassName": "Xaml_WindowedPopupClass",
+    "popupTitle": "PopupHost",
+    "popupProcessName": "LiveCaptions.exe",
+    "propTitle": "Live Captions",
+    "propClassName": "LiveCaptionsDesktopWindow"
+  }
+}
