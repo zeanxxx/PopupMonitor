@@ -53,9 +53,6 @@ type MSG struct {
 	Pt      struct{ X, Y int32 }
 }
 
-// 定義回呼函式型別
-type WinEventProc func(hWinEventHook HOOK, event uint32, hwnd HWND, idObject, idChild int32, idEventThread, dwmsEventTime uint32)
-
 var (
 	hookHandle                 uintptr
 	hookActive                 = true

@@ -3,6 +3,9 @@ package lang
 func PopupTitle() string {
 	return get("popupTitle")
 }
+func AboutContent() string {
+	return get("aboutContent")
+}
 
 func PopupClassName() string {
 	return get("popupClassName")

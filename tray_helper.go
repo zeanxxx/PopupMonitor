@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"fmt"
 	"os"
+	"pop-up-monitor/lang"
 	"syscall"
 	"unsafe"
 
@@ -92,18 +93,7 @@ func openLiveCaptionsWindow() {
 }
 
 func showAbout() {
-	aboutText :=
-		"About PopUp Monitor\n\n" +
-			"This app monitors and automatically hides Windows Live Captions popups.\n\n" +
-			"Key Features:\n" +
-			"• Runs in system tray\n" +
-			"• Start/Stop monitoring\n" +
-			"• Automatic popup detection\n" +
-			"• Popup hide notifications\n" +
-			"To interact with Live Captions, stop monitoring first.\n" +
-			"Enjoy!\n\n" +
-			"Feedback: zeansss@outlook.com\n" +
-			"By Zean"
+	aboutText := lang.AboutContent()
 	showMessage("About PopUp Monitor", aboutText)
 }
 
