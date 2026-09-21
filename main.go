@@ -20,12 +20,11 @@ func main() {
 
 		//os.Exit(1)
 	}
-	// if windows.GetLastError() == syscall.ERROR_ALREADY_EXISTS {
-	// 	fmt.Println("The program is already running.")
-	// 	showMessage("Warning", "The program is already running.")
-	// 	return
-	// 	//os.Exit(0)
-	// }
+	if windows.GetLastError() == syscall.ERROR_ALREADY_EXISTS {
+		showMessage("Warning", "The program is already running.")
+		return
+		//os.Exit(0)
+	}
 	lang.DetectSystemLanguage()
 	lang.LoadTranslations()
 

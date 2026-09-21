@@ -18,6 +18,7 @@ var (
 	inactiveIcon    []byte
 	procKeybdEvent  = user32.NewProc("keybd_event")
 	procMessageBoxW = user32.NewProc("MessageBoxW")
+	procShellExecuteW  = syscall.NewLazyDLL("shell32.dll").NewProc("ShellExecuteW")
 )
 
 const (
@@ -27,7 +28,7 @@ const (
 	KEYEVENTF_KEYUP = 0x0002
 	MB_OK           = 0x00000000
 )
-
+const feedbackURL = "https://github.com/zeanxxx/PopupMonitor/issues"
 func onReady() {
 
 	// inactiveIcon, _ = os.ReadFile("assets/inactive.ico")
@@ -39,6 +40,7 @@ func onReady() {
 	mStop := systray.AddMenuItem("Stop Monitoring", "stop monitoring popups")
 	systray.AddSeparator()
 	mAbout := systray.AddMenuItem("About", "about this application")
+	mFeedback := systray.AddMenuItem("Feedback", "provide feedback about this application")
 	systray.AddSeparator()
 	mQuit := systray.AddMenuItem("Exit", "exit application")
 
@@ -62,6 +64,9 @@ func onReady() {
 				fmt.Println("Stopping monitorning popups")
 			case <-mAbout.ClickedCh:
 				showAbout()
+
+			case <-mFeedback.ClickedCh:
+				openBrowser(feedbackURL)
 			case <-mQuit.ClickedCh:
 				systray.Quit()
 				os.Exit(0)
@@ -93,8 +98,23 @@ func openLiveCaptionsWindow() {
 }
 
 func showAbout() {
+	aboutTitle := lang.AboutTitle()
 	aboutText := lang.AboutContent()
-	showMessage("About PopUp Monitor", aboutText)
+	showMessage(aboutTitle, aboutText)
+}
+
+func openBrowser(url string) {
+    u, _ := syscall.UTF16PtrFromString(url)
+    v, _ := syscall.UTF16PtrFromString("open")
+
+    procShellExecuteW.Call(
+        0,
+        uintptr(unsafe.Pointer(v)),
+        uintptr(unsafe.Pointer(u)),
+        0,
+        0,
+        1,
+    )
 }
 
 func showMessage(title, text string) {
