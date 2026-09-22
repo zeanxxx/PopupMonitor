@@ -9,25 +9,29 @@ import (
 )
 
 func main() {
-	// check if the mutex already exists
-	name, _ := syscall.UTF16PtrFromString("Global\\PopUpMonitorMutex")
-	_, err := windows.CreateMutex(nil, false, name)
-	if err != nil {
-		//msg := fmt.Sprintf("CreateMutex fail:", err)
-		//showMessage("Warning", msg)
-		showMessage("Information", "The program is already running.")
-		return
-
-		//os.Exit(1)
-	}
-	if windows.GetLastError() == syscall.ERROR_ALREADY_EXISTS {
-		showMessage("Warning", "The program is already running.")
-		return
-		//os.Exit(0)
-	}
+	_ = enableDPIAwareness()
 	lang.DetectSystemLanguage()
 	lang.LoadTranslations()
 
-	systray.Run(onReady, onExit)
+	name, err := windows.UTF16PtrFromString("Global\\PopUpMonitorMutex")
+	if err != nil {
+		return
+	}
 
+	mutex, err := windows.CreateMutex(nil, false, name)
+	if err == syscall.ERROR_ALREADY_EXISTS {
+		if mutex != 0 {
+			windows.CloseHandle(mutex)
+		}
+		showMessage(lang.AlreadyRunningTitle(), lang.AlreadyRunningMessage())
+		return
+	}
+	if err != nil {
+		showMessage(lang.MutexErrorTitle(), lang.MutexErrorMessage())
+		return
+	}
+
+	defer windows.CloseHandle(mutex)
+
+	systray.Run(onReady, onExit)
 }

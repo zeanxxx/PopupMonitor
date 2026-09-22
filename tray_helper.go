@@ -15,10 +15,11 @@ var (
 	//go:embed assets/active.ico
 	activeIcon []byte
 	//go:embed assets/inactive.ico
-	inactiveIcon    []byte
-	procKeybdEvent  = user32.NewProc("keybd_event")
-	procMessageBoxW = user32.NewProc("MessageBoxW")
-	procShellExecuteW  = syscall.NewLazyDLL("shell32.dll").NewProc("ShellExecuteW")
+	inactiveIcon                      []byte
+	procKeybdEvent                    = user32.NewProc("keybd_event")
+	procMessageBoxW                   = user32.NewProc("MessageBoxW")
+	procShellExecuteW                 = syscall.NewLazyDLL("shell32.dll").NewProc("ShellExecuteW")
+	procSetProcessDpiAwarenessContext = user32.NewProc("SetProcessDpiAwarenessContext")
 )
 
 const (
@@ -27,22 +28,40 @@ const (
 	VK_L            = 0x4C
 	KEYEVENTF_KEYUP = 0x0002
 	MB_OK           = 0x00000000
+
+	MB_OKCANCEL     = 0x00000001
+	MB_ICONQUESTION = 0x00000020
+	MB_DEFBUTTON2   = 0x00000100
+	IDOK            = 1
 )
 const feedbackURL = "https://github.com/zeanxxx/PopupMonitor/issues"
+
+func enableDPIAwareness() error {
+	const DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = ^uintptr(3)
+
+	ret, _, err := procSetProcessDpiAwarenessContext.Call(
+		DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+	)
+	if ret == 0 {
+		return fmt.Errorf("failed to enable DPI awareness: %w", err)
+	}
+	return nil
+}
+
 func onReady() {
 
 	// inactiveIcon, _ = os.ReadFile("assets/inactive.ico")
 	systray.SetTitle("PopUp Monitor")
 	setActiveTray()
-	mOpen := systray.AddMenuItem("Open LiveCaptions", "open live captions window")
+	mOpen := systray.AddMenuItem(lang.MenuOpen(), lang.MenuOpenTip())
 	systray.AddSeparator()
-	mStart := systray.AddMenuItem("Start Monitoring", "start monitoring popups")
-	mStop := systray.AddMenuItem("Stop Monitoring", "stop monitoring popups")
+	mStart := systray.AddMenuItem(lang.MenuStart(), lang.MenuStartTip())
+	mStop := systray.AddMenuItem(lang.MenuStop(), lang.MenuStopTip())
 	systray.AddSeparator()
-	mAbout := systray.AddMenuItem("About", "about this application")
-	mFeedback := systray.AddMenuItem("Feedback", "provide feedback about this application")
+	mAbout := systray.AddMenuItem(lang.MenuAbout(), lang.MenuAboutTip())
+	mFeedback := systray.AddMenuItem(lang.MenuFeedback(), lang.MenuFeedbackTip())
 	systray.AddSeparator()
-	mQuit := systray.AddMenuItem("Exit", "exit application")
+	mQuit := systray.AddMenuItem(lang.MenuExit(), lang.MenuExitTip())
 
 	go func() {
 		openLiveCaptionsWindow()
@@ -66,7 +85,7 @@ func onReady() {
 				showAbout()
 
 			case <-mFeedback.ClickedCh:
-				openBrowser(feedbackURL)
+				confirmExternalLink(feedbackURL)
 			case <-mQuit.ClickedCh:
 				systray.Quit()
 				os.Exit(0)
@@ -80,12 +99,12 @@ func onExit() {
 }
 func setInactiveTray() {
 	systray.SetIcon(inactiveIcon)
-	systray.SetTooltip("PopUp Monitor (Stopped)")
+	systray.SetTooltip(lang.TrayStopped())
 }
 
 func setActiveTray() {
 	systray.SetIcon(activeIcon)
-	systray.SetTooltip("PopUp Monitor (Running)")
+	systray.SetTooltip(lang.TrayRunning())
 }
 
 func openLiveCaptionsWindow() {
@@ -98,23 +117,39 @@ func openLiveCaptionsWindow() {
 }
 
 func showAbout() {
-	aboutTitle := lang.AboutTitle()
+	aboutTitle := lang.MenuAboutTip()
 	aboutText := lang.AboutContent()
 	showMessage(aboutTitle, aboutText)
 }
 
-func openBrowser(url string) {
-    u, _ := syscall.UTF16PtrFromString(url)
-    v, _ := syscall.UTF16PtrFromString("open")
+func confirmExternalLink(url string) {
+	title, _ := syscall.UTF16PtrFromString(lang.ExternalLinkTitle())
+	content, _ := syscall.UTF16PtrFromString(lang.ExternalLinkMessage() + "\n\n" + url)
 
-    procShellExecuteW.Call(
-        0,
-        uintptr(unsafe.Pointer(v)),
-        uintptr(unsafe.Pointer(u)),
-        0,
-        0,
-        1,
-    )
+	ret, _, _ := procMessageBoxW.Call(
+		0,
+		uintptr(unsafe.Pointer(content)),
+		uintptr(unsafe.Pointer(title)),
+		MB_OKCANCEL|MB_ICONQUESTION|MB_DEFBUTTON2,
+	)
+
+	if ret == IDOK {
+		openBrowser(url)
+	}
+}
+
+func openBrowser(url string) {
+	u, _ := syscall.UTF16PtrFromString(url)
+	v, _ := syscall.UTF16PtrFromString("open")
+
+	procShellExecuteW.Call(
+		0,
+		uintptr(unsafe.Pointer(v)),
+		uintptr(unsafe.Pointer(u)),
+		0,
+		0,
+		1,
+	)
 }
 
 func showMessage(title, text string) {
