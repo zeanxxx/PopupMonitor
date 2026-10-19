@@ -3,10 +3,10 @@ package main
 import (
 	"fmt"
 	"pop-up-monitor/lang"
+	"runtime"
+	"sync"
 	"syscall"
 	"unsafe"
-
-	"github.com/go-ole/go-ole"
 )
 
 var (
@@ -24,10 +24,13 @@ var (
 	procGetClassNameW      = user32.NewProc("GetClassNameW")
 	procGetWindowThreadPID = user32.NewProc("GetWindowThreadProcessId")
 
-	procSetWinEventHook  = user32.NewProc("SetWinEventHook")
-	procUnhookWinEvent   = user32.NewProc("UnhookWinEvent")
-	procGetMessageW      = user32.NewProc("GetMessageW")
-	procDispatchMessageW = user32.NewProc("DispatchMessageW")
+	procSetWinEventHook    = user32.NewProc("SetWinEventHook")
+	procUnhookWinEvent     = user32.NewProc("UnhookWinEvent")
+	procGetMessageW        = user32.NewProc("GetMessageW")
+	procDispatchMessageW   = user32.NewProc("DispatchMessageW")
+	procPostThreadMessageW = user32.NewProc("PostThreadMessageW")
+	procGetCurrentThreadID = kernel32.NewProc("GetCurrentThreadId")
+	procPeekMessageW       = user32.NewProc("PeekMessageW")
 	//procTranslateMessage = user32.NewProc("TranslateMessage")
 )
 
@@ -40,6 +43,12 @@ const (
 	EVENT_OBJECT_DESTROY  = 0x8001
 	EVENT_OBJECT_SHOW     = 0x8002
 	WINEVENT_OUTOFCONTEXT = 0x0000
+
+	WINEVENT_SKIPOWNPROCESS = 0x0002
+	WM_QUIT                 = 0x0012
+
+	OBJID_WINDOW = 0
+	CHILDID_SELF = 0
 )
 
 type HOOK uintptr
@@ -54,18 +63,37 @@ type MSG struct {
 }
 
 var (
-	hookHandle                 uintptr
-	hookActive                 = true
-	stopMonitoringChan         chan struct{}
-	popup_winEventProcCallback = syscall.NewCallback(func(hWinEventHook HOOK, event uint32, hwnd HWND, idObject, idChild int32, idEventThread, dwmsEventTime uint32) uintptr {
-		if !hookActive {
-			return 0
-		}
+	liveCaptionsHWND uintptr
+	hookHandle       uintptr
+
+	monitorMu       sync.Mutex
+	monitorThreadID uintptr
+	monitorDone     chan struct{}
+	monitorStopping bool
+
+	popup_winEventProcCallback = syscall.NewCallback(func(
+		hWinEventHook HOOK,
+		event uint32,
+		hwnd HWND,
+		idObject, idChild int32,
+		idEventThread, dwmsEventTime uint32,
+	) uintptr {
 		handlePopupsByHwnd(uintptr(hwnd))
 		return 0
 	})
 
-	process_winEventProcCallback = syscall.NewCallback(func(hWinEventHook HOOK, event uint32, hwnd HWND, idObject, idChild int32, idEventThread, dwmsEventTime uint32) uintptr {
+	process_winEventProcCallback = syscall.NewCallback(func(
+		hWinEventHook HOOK,
+		event uint32,
+		hwnd HWND,
+		idObject, idChild int32,
+		idEventThread, dwmsEventTime uint32,
+	) uintptr {
+		if hwnd == 0 ||
+			idObject != OBJID_WINDOW ||
+			idChild != CHILDID_SELF {
+			return 0
+		}
 
 		handleProcessByHwnd(uintptr(hwnd), event)
 		return 0
@@ -73,9 +101,12 @@ var (
 )
 
 func closeCurrentPopup(hwnd uintptr) {
-	if hwnd != 0 {
-		procShowWindow.Call(hwnd, SW_HIDE)
+	if hwnd == 0 {
+		return
 	}
+
+	procShowWindow.Call(hwnd, SW_HIDE)
+	recordPopupBlocked()
 }
 
 func enumWindows(callback func(hwnd uintptr) bool) {
@@ -83,7 +114,7 @@ func enumWindows(callback func(hwnd uintptr) bool) {
 		if callback(hwnd) {
 			return 1
 		}
-		return 1
+		return 0
 	})
 	procEnumWindows.Call(cb, 0)
 }
@@ -122,7 +153,11 @@ func getWindowText(hwnd uintptr) string {
 		return ""
 	}
 	buf := make([]uint16, length+1)
-	procGetWindowTextW.Call(hwnd, uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)+1))
+	procGetWindowTextW.Call(
+		hwnd,
+		uintptr(unsafe.Pointer(&buf[0])),
+		uintptr(len(buf)),
+	)
 	return syscall.UTF16ToString(buf)
 }
 
@@ -131,66 +166,72 @@ func getClassName(hwnd uintptr) string {
 	procGetClassNameW.Call(hwnd, uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
 	return syscall.UTF16ToString(buf)
 }
-func handlePopupsByHwnd(hwnd uintptr) {
-	//hwnd := findWindow("Xaml_WindowedPopupClass", "PopupHost")
-	if hwnd != 0 {
-		className := getClassName(hwnd)
-		title := getWindowText(hwnd)
-		if className == lang.PopupClassName() && title == lang.PopupTitle() {
-			fmt.Printf("className %s\n", className)
-			fmt.Printf("title %s\n", title)
-			processName, _ := getProcessName(hwnd)
-			if processName == lang.PopupProcessName() {
-				fmt.Printf("Closing LiveCaptions window: %s\n", hwnd)
-				closeCurrentPopup(hwnd)
 
-			} else {
-				//fmt.Printf("Found popup from process: %s, but not closing it\n", processName)
-			}
-		}
-	} else {
-		fmt.Println("LiveCaptions window not found")
+func handlePopupsByHwnd(hwnd uintptr) {
+	if hwnd == 0 {
+		return
 	}
+
+	className := getClassName(hwnd)
+	if className != lang.PopupClassName() {
+		return
+	}
+
+	title := getWindowText(hwnd)
+	if title != lang.PopupTitle() {
+		return
+	}
+
+	processName, err := getProcessName(hwnd)
+	if err != nil || processName != lang.PopupProcessName() {
+		return
+	}
+	fmt.Printf("className %s\n", className)
+	fmt.Printf("title %s\n", title)
+	fmt.Printf("Closing LiveCaptions window: %v\n", hwnd)
+	closeCurrentPopup(hwnd)
 }
 
 func handleProcessByHwnd(hwnd uintptr, event uint32) {
-
-	if hwnd != 0 {
-		className := getClassName(hwnd)
-
-		title := getWindowText(hwnd)
-		if len(title) > 0 {
-			if className == lang.PropClassName() && title == lang.PropTitle() {
-				fmt.Printf("[Process]className %s\n", className)
-				fmt.Printf("[Process]title %s\n", title)
-				processName, _ := getProcessName(hwnd)
-				if processName == lang.PopupProcessName() {
-					fmt.Printf("LiveCaptions window action: %s\n", hwnd)
-					switch event {
-					case EVENT_OBJECT_SHOW:
-						fmt.Printf("SHOW: hwnd=0x%x\n", hwnd)
-						setActiveTray()
-						startMonitorPopups()
-					case EVENT_OBJECT_CREATE:
-						fmt.Printf("CREATE: hwnd=0x%x\n", hwnd)
-						setActiveTray()
-						startMonitorPopups()
-					case EVENT_OBJECT_DESTROY:
-						fmt.Printf("DESTROY: hwnd=0x%x\n", hwnd)
-						setInactiveTray()
-						stopMonitoringPopups()
-					default:
-						fmt.Printf("other events %d, hwnd=0x%x\n", event, hwnd)
-					}
-				} else {
-					fmt.Printf("Found popup from process: %s, but not closing it\n", processName)
-				}
-			}
+	if hwnd == 0 {
+		return
+	}
+	// handle destory first
+	if event == EVENT_OBJECT_DESTROY {
+		if liveCaptionsHWND == 0 || hwnd != liveCaptionsHWND {
+			return
 		}
 
-	} else {
-		fmt.Println("LiveCaptions window not found")
+		fmt.Printf("[Process] DESTROY: hwnd=0x%x\n", hwnd)
+
+		liveCaptionsHWND = 0
+		setInactiveTray()
+		stopMonitoringPopups()
+		return
 	}
+
+	if event != EVENT_OBJECT_CREATE && event != EVENT_OBJECT_SHOW {
+		return
+	}
+
+	if getClassName(hwnd) != lang.PropClassName() {
+		return
+	}
+
+	if getWindowText(hwnd) != lang.PropTitle() {
+		return
+	}
+
+	processName, err := getProcessName(hwnd)
+	if err != nil || processName != lang.PopupProcessName() {
+		return
+	}
+
+	liveCaptionsHWND = hwnd
+
+	fmt.Printf("[Process] CREATE/SHOW: hwnd=0x%x\n", hwnd)
+	setActiveTray()
+	startMonitorPopups()
 }
 
 func monitorPopupsOnce() {
@@ -203,14 +244,16 @@ func monitorPopupsOnce() {
 // use WinEvent hook to monitor popup windows is opened or not
 func startProcessWatcher() {
 	go func() {
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
 		hWinEventHook, _, _ := procSetWinEventHook.Call(
 			uintptr(EVENT_OBJECT_CREATE),
-			uintptr(EVENT_OBJECT_DESTROY),
+			uintptr(EVENT_OBJECT_SHOW),
 			0,
 			process_winEventProcCallback,
 			0,
 			0,
-			uintptr(WINEVENT_OUTOFCONTEXT),
+			uintptr(WINEVENT_OUTOFCONTEXT|WINEVENT_SKIPOWNPROCESS),
 		)
 		if hWinEventHook == 0 {
 			fmt.Println("[ProcessWatch] Failed to set WinEvent hook")
@@ -219,7 +262,10 @@ func startProcessWatcher() {
 		defer procUnhookWinEvent.Call(hWinEventHook)
 
 		fmt.Println("[ProcessWatch] Hook set successfully")
-
+		enumWindows(func(hwnd uintptr) bool {
+			handleProcessByHwnd(hwnd, EVENT_OBJECT_SHOW)
+			return true
+		})
 		var msg MSG
 		for {
 
@@ -235,61 +281,126 @@ func startProcessWatcher() {
 }
 
 func startMonitorPopups() {
-	if hookHandle != 0 {
-		fmt.Println("Already exist hook")
+	monitorMu.Lock()
+	defer monitorMu.Unlock()
 
+	if monitorDone != nil {
+		fmt.Println("[PopupMonitor] Already running or stopping")
 		return
 	}
-	stopMonitoringChan = make(chan struct{})
-	go func() {
 
-		// init COM (STA)
-		ole.CoInitializeEx(0, ole.COINIT_APARTMENTTHREADED)
-		defer ole.CoUninitialize()
-		hWinEventHook, _, _ := procSetWinEventHook.Call(
-			uintptr(EVENT_OBJECT_CREATE), // eventMin
-			uintptr(EVENT_OBJECT_SHOW),   // eventMax
+	done := make(chan struct{})
+	ready := make(chan bool)
+
+	monitorDone = done
+	monitorStopping = false
+
+	go func() {
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+
+		var h uintptr
+
+		defer func() {
+			if h != 0 {
+				ret, _, err := procUnhookWinEvent.Call(h)
+				if ret == 0 {
+					fmt.Printf("[PopupMonitor] Unhook failed: %v\n", err)
+				}
+			}
+
+			monitorMu.Lock()
+			hookHandle = 0
+			monitorThreadID = 0
+			monitorDone = nil
+			monitorStopping = false
+			close(done)
+			monitorMu.Unlock()
+
+			fmt.Println("[PopupMonitor] Stopped")
+		}()
+
+		threadID, _, _ := procGetCurrentThreadID.Call()
+
+		var msg MSG
+		procPeekMessageW.Call(
+			uintptr(unsafe.Pointer(&msg)),
+			0, 0, 0, 0,
+		)
+
+		var err error
+		h, _, err = procSetWinEventHook.Call(
+			uintptr(EVENT_OBJECT_CREATE),
+			uintptr(EVENT_OBJECT_SHOW),
 			0,
 			popup_winEventProcCallback,
 			0,
 			0,
-			uintptr(WINEVENT_OUTOFCONTEXT),
+			uintptr(WINEVENT_OUTOFCONTEXT|WINEVENT_SKIPOWNPROCESS),
 		)
-
-		if hWinEventHook == 0 {
-			fmt.Println("[PopupMonitor]Failed to set WinEvent hook")
+		if h == 0 {
+			fmt.Printf("[PopupMonitor] Set hook failed: %v\n", err)
+			ready <- false
 			return
-		} else {
-			fmt.Println("[PopupMonitor]WinEvent hook set successfully")
 		}
-		hookHandle = hWinEventHook
-		hookActive = true
-		//defer procUnhookWinEvent.Call(hWinEventHook)
 
-		var msg MSG
+		hookHandle = h
+		monitorThreadID = threadID
+		ready <- true
+
 		for {
-			select {
-			case <-stopMonitoringChan:
+			ret, _, err := procGetMessageW.Call(
+				uintptr(unsafe.Pointer(&msg)), 0, 0, 0,
+			)
+
+			switch int32(ret) {
+			case -1:
+				fmt.Printf("[PopupMonitor] GetMessage failed: %v\n", err)
 				return
-			default:
-				ret, _, _ := procGetMessageW.Call(uintptr(unsafe.Pointer(&msg)), 0, 0, 0)
-				if int32(ret) == -1 {
-					break
-				}
-				//procTranslateMessage.Call(uintptr(unsafe.Pointer(&msg)))
-				procDispatchMessageW.Call(uintptr(unsafe.Pointer(&msg)))
+			case 0:
+				return
 			}
+
+			procDispatchMessageW.Call(
+				uintptr(unsafe.Pointer(&msg)),
+			)
 		}
 	}()
+
+	if <-ready {
+		fmt.Println("[PopupMonitor] Started")
+	}
 }
 
 func stopMonitoringPopups() {
+	monitorMu.Lock()
 
-	if hookHandle != 0 {
-		procUnhookWinEvent.Call(hookHandle)
-		hookHandle = 0
-		hookActive = false
-		close(stopMonitoringChan)
-		stopMonitoringChan = make(chan struct{})
+	if monitorDone == nil {
+		monitorMu.Unlock()
+		return
 	}
+
+	done := monitorDone
+
+	if !monitorStopping {
+		if monitorThreadID != 0 {
+			ret, _, err := procPostThreadMessageW.Call(
+				monitorThreadID,
+				uintptr(WM_QUIT),
+				0,
+				0,
+			)
+			if ret == 0 {
+				monitorMu.Unlock()
+				fmt.Printf("[PopupMonitor] Send WM_QUIT failed: %v\n", err)
+				return
+			}
+		}
+
+		monitorStopping = true
+	}
+
+	monitorMu.Unlock()
+
+	<-done
 }

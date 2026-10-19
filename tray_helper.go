@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"pop-up-monitor/lang"
+	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"github.com/getlantern/systray"
@@ -20,6 +22,13 @@ var (
 	procMessageBoxW                   = user32.NewProc("MessageBoxW")
 	procShellExecuteW                 = syscall.NewLazyDLL("shell32.dll").NewProc("ShellExecuteW")
 	procSetProcessDpiAwarenessContext = user32.NewProc("SetProcessDpiAwarenessContext")
+
+	popupStatsMu sync.Mutex
+	// popupBlockedCount uint64
+	popupLastBlocked  time.Time
+	popupStatsChanged = make(chan struct{}, 1)
+
+	trayRunning bool
 )
 
 const (
@@ -62,7 +71,11 @@ func onReady() {
 	mFeedback := systray.AddMenuItem(lang.MenuFeedback(), lang.MenuFeedbackTip())
 	systray.AddSeparator()
 	mQuit := systray.AddMenuItem(lang.MenuExit(), lang.MenuExitTip())
-
+	go func() {
+		for range popupStatsChanged {
+			refreshTrayTooltip()
+		}
+	}()
 	go func() {
 		openLiveCaptionsWindow()
 		monitorPopupsOnce()
@@ -97,16 +110,30 @@ func onReady() {
 func onExit() {
 	// clean up here
 }
-func setInactiveTray() {
-	systray.SetIcon(inactiveIcon)
-	systray.SetTooltip(lang.TrayStopped())
-}
-
 func setActiveTray() {
-	systray.SetIcon(activeIcon)
-	systray.SetTooltip(lang.TrayRunning())
+	setTrayState(true)
 }
 
+func setInactiveTray() {
+	setTrayState(false)
+}
+
+func setTrayState(running bool) {
+	popupStatsMu.Lock()
+	trayRunning = running
+	popupStatsMu.Unlock()
+
+	if running {
+		systray.SetIcon(activeIcon)
+	} else {
+		systray.SetIcon(inactiveIcon)
+	}
+
+	select {
+	case popupStatsChanged <- struct{}{}:
+	default:
+	}
+}
 func openLiveCaptionsWindow() {
 	procKeybdEvent.Call(uintptr(VK_CONTROL), 0, 0, 0)
 	procKeybdEvent.Call(uintptr(VK_LWIN), 0, 0, 0)
@@ -162,4 +189,49 @@ func showMessage(title, text string) {
 		uintptr(unsafe.Pointer(t)),
 		MB_OK,
 	)
+}
+
+func recordPopupBlocked() {
+	popupStatsMu.Lock()
+	// popupBlockedCount++
+
+	now := time.Now()
+	needRefresh := popupLastBlocked.IsZero() ||
+		now.Unix() != popupLastBlocked.Unix()
+
+	popupLastBlocked = now
+	popupStatsMu.Unlock()
+
+	if !needRefresh {
+		return
+	}
+
+	select {
+	case popupStatsChanged <- struct{}{}:
+	default:
+	}
+}
+func refreshTrayTooltip() {
+	popupStatsMu.Lock()
+	running := trayRunning
+	// count := popupBlockedCount
+	last := popupLastBlocked
+	popupStatsMu.Unlock()
+
+	status := lang.TrayStopped()
+	if running {
+		status = lang.TrayRunning()
+	}
+
+	lastText := lang.TrayLastText()
+	if !last.IsZero() {
+		lastText = last.Format("15:04:05")
+	}
+
+	// countLine := fmt.Sprintf(lang.TrayCurrent(), count)
+
+	systray.SetTooltip(fmt.Sprintf(
+		"%s\n%s",
+		status, fmt.Sprintf(lang.TraySummary(), lastText),
+	))
 }

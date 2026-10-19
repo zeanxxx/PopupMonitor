@@ -94,6 +94,18 @@ func TrayStopped() string {
 	return get("trayStopped")
 }
 
+func TrayLastText() string {
+	return get("trayLastText")
+}
+
+func TrayCurrent() string {
+	return get("trayCurrent")
+}
+
+func TraySummary() string {
+	return get("traySummary")
+}
+
 func ExternalLinkTitle() string {
 	return get("externalLinkTitle")
 }
