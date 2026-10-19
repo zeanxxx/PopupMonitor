@@ -13,7 +13,6 @@ PopUp Monitor was created to address this issue by automatically detecting and h
 * Runs quietly in the system tray.
 * Start or stop monitoring at any time.
 * Automatically detects and hides Live Captions pop-up windows.
-* Displays a notification when a pop-up window is hidden.
 
 ### System Requirements
 
@@ -27,7 +26,7 @@ Run the application and enable monitoring from the system tray.
 
 ---
 
-## 中文说明
+## 弹窗监控工具
 
 PopUp Monitor 是一款适用于 Windows 11 的轻量级系统托盘工具，可自动检测并隐藏 Windows 实时字幕（Live Captions）的弹出窗口。
 
@@ -42,7 +41,6 @@ Windows 11 自带的实时字幕功能在使用过程中可能反复出现弹窗
 * 在系统托盘中运行。
 * 随时开启或停止监测。
 * 自动检测并隐藏实时字幕弹窗。
-* 隐藏弹窗时显示通知。
 
 ### 运行环境
 
@@ -56,6 +54,15 @@ Windows 11 自带的实时字幕功能在使用过程中可能反复出现弹窗
 
 ---
 
+### Preview / 功能预览
+
+| Display / 显示内容 | Running / 运行中 | Stopped / 已停止 |
+| :---: | :---: | :---: |
+| Tray icon / 托盘图标 | <img src="./assets/active.ico" width="24" alt="Running" /> | <img src="./assets/inactive.ico" width="24" alt="Stopped" />  |
+| Tooltip / 悬停提示 | <img width="300" alt="Running tooltip" src="https://github.com/user-attachments/assets/ea7b4668-fd09-4c96-b28b-55f37db32e91" /> | <img width="300" alt="Stopped tooltip" src="https://github.com/user-attachments/assets/d3185fda-cde4-48cd-b28d-f9df08c0402c" /> |
+
+---
+
 ### Feedback / 问题反馈
 
 Found a bug or have a suggestion? Please open an issue.
@@ -63,3 +70,5 @@ Found a bug or have a suggestion? Please open an issue.
 如遇到问题或有功能建议，欢迎通过 GitHub Issues 反馈。
 
 https://github.com/zeanxxx/PopupMonitor/issues
+
+
